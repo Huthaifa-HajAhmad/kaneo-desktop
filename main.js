@@ -22,6 +22,7 @@ const {
   nativeTheme,
 } = require("electron");
 const path = require("node:path");
+const fs = require("node:fs");
 const { spawn } = require("node:child_process");
 
 const APP_URL = process.env.KANEO_URL || "http://localhost:5173";
@@ -93,6 +94,22 @@ async function syncTheme() {
   }
 }
 
+// ---- update log --------------------------------------------------------------
+// electron-updater is otherwise a black box. Everything it does (and every
+// failure) lands in <userData>/update.log so an update can actually be watched.
+function logUpdate(level, ...args) {
+  const text = args
+    .map((a) => (a instanceof Error ? a.message : typeof a === "string" ? a : JSON.stringify(a)))
+    .join(" ");
+  const line = `[${new Date().toISOString()}] ${level.padEnd(5)} ${text}`;
+  try {
+    fs.appendFileSync(path.join(app.getPath("userData"), "update.log"), line + "\n");
+  } catch {
+    /* logging must never break the app */
+  }
+  console.log(`[update] ${line}`);
+}
+
 // ---- update Kaneo itself (the containers) ----------------------------------
 function runKaneoUpdate() {
   if (updatingKaneo) return;
@@ -138,13 +155,27 @@ function loadUpdater() {
   try {
     ({ autoUpdater } = require("electron-updater"));
   } catch {
-    console.error("[update] electron-updater is not installed");
+    logUpdate("error", "electron-updater is not installed");
     return null;
   }
 
   autoUpdater.autoDownload = true;
-  autoUpdater.on("error", (err) => console.error("[update] error:", err?.message || err));
+  autoUpdater.logger = {
+    info: (...a) => logUpdate("info", ...a),
+    warn: (...a) => logUpdate("warn", ...a),
+    error: (...a) => logUpdate("error", ...a),
+    debug: (...a) => logUpdate("debug", ...a),
+  };
+
+  autoUpdater.on("checking-for-update", () => logUpdate("info", `checking (installed ${app.getVersion()})`));
+  autoUpdater.on("update-available", (i) => logUpdate("info", "available:", i?.version));
+  autoUpdater.on("update-not-available", (i) => logUpdate("info", "not available; latest is", i?.version));
+  autoUpdater.on("download-progress", (p) =>
+    logUpdate("debug", `downloading ${Math.round(p?.percent ?? 0)}%`)
+  );
+  autoUpdater.on("error", (err) => logUpdate("error", err));
   autoUpdater.on("update-downloaded", async (info) => {
+    logUpdate("info", "downloaded:", info?.version);
     const { response } = await dialog.showMessageBox({
       type: "info",
       buttons: ["Restart now", "Later"],
@@ -155,7 +186,9 @@ function loadUpdater() {
       detail: "Restart to finish updating.",
     });
     if (response === 0) autoUpdater.quitAndInstall();
+    else logUpdate("info", "update deferred to next launch");
   });
+
   return autoUpdater;
 }
 
@@ -173,7 +206,9 @@ function checkAppUpdates(interactive) {
     }
     return;
   }
+  logUpdate("info", "manual check requested");
   u.checkForUpdates().catch((err) => {
+    logUpdate("error", err);
     if (interactive) {
       dialog.showMessageBox({
         type: "error",
@@ -187,8 +222,11 @@ function checkAppUpdates(interactive) {
 function startAutoUpdate() {
   const u = loadUpdater();
   if (!u) return;
-  u.checkForUpdatesAndNotify().catch(() => {});
-  updateTimer = setInterval(() => u.checkForUpdates().catch(() => {}), 6 * 60 * 60 * 1000);
+  u.checkForUpdatesAndNotify().catch((err) => logUpdate("error", err));
+  updateTimer = setInterval(
+    () => u.checkForUpdates().catch((err) => logUpdate("error", err)),
+    6 * 60 * 60 * 1000
+  );
 }
 
 // ---- window ------------------------------------------------------------------
@@ -312,6 +350,7 @@ ipcMain.on("kaneo:menu", () => showBarMenu());
 // ---- lifecycle ---------------------------------------------------------------
 app.whenReady().then(() => {
   app.setAppUserModelId("app.kaneo.desktop"); // Windows taskbar identity
+  logUpdate("info", `starting v${app.getVersion()} (packaged=${app.isPackaged})`);
   createWindow();
   startAutoUpdate();
 

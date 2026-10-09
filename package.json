@@ -1,7 +1,7 @@
 {
   "name": "kaneo-desktop",
   "productName": "Kaneo",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Desktop wrapper for a self-hosted Kaneo instance",
   "main": "main.js",
   "private": true,
