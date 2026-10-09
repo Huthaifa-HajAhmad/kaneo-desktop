@@ -19,9 +19,8 @@ $version = (Get-Content (Join-Path $root "package.json") -Raw | ConvertFrom-Json
 $tag = "v$version"
 $repo = "Huthaifa-HajAhmad/kaneo-desktop"
 
-if (-not $env:GH_TOKEN) {
-  throw "GH_TOKEN is not set. Run:  `$env:GH_TOKEN = gh auth token"
-}
+gh auth status *> $null
+if ($LASTEXITCODE -ne 0) { throw "gh is not authenticated. Run: gh auth login" }
 
 Write-Host "==> Building $tag" -ForegroundColor Cyan
 npm run dist

@@ -8,7 +8,7 @@ instead of a browser tab.
 - Backend: Kaneo + PostgreSQL, running in Docker inside WSL2 Ubuntu (`~/kaneo`).
 - Frontend: this Electron app, running on Windows, pointed at `http://localhost:5173`.
 - WSL2 forwards `localhost`, so the Windows app can reach the containers directly.
-- Repo: https://github.com/Huthaifa-HajAhmad/kaneo-desktop (private) — the release
+- Repo: https://github.com/Huthaifa-HajAhmad/kaneo-desktop (public) — the release
   feed for shell updates. Baseline release: `v1.0.2`.
 
 ## Run it
@@ -117,7 +117,7 @@ bump it.
 
 1. Bump `version` in `package.json` and commit it — the updater compares the
    published version against the installed one.
-2. `$env:GH_TOKEN = gh auth token`, then `npm run release`.
+2. `npm run release` — needs `gh` authenticated; the script checks and tells you.
 
 `tools/release.ps1` builds the installer, tags `v<version>`, pushes the tag, and
 attaches three assets: `Kaneo-Setup-<version>.exe`, its `.blockmap`, and
@@ -128,19 +128,14 @@ without it is never offered.
 git tag to exist first or GitHub rejects it with "Published releases must have a
 valid tag". The script tags before it uploads.)
 
-**Private repo — this bit is easy to get wrong.** Because the repo is private,
-GitHub only serves the release feed to an authenticated request, and
-`electron-updater` only reads `GH_TOKEN` from the environment when the publish
-config is flagged private. Without it the check silently gets a 404 (GitHub hides
-private repos rather than returning 403). So `build.publish[0].private` is `true`,
-and any machine that should auto-update needs:
+**The repo is public, so there is no update secret.** That is deliberate: an
+earlier private setup needed a GitHub token in the environment just to read the
+release feed, and when the token was missing the check failed *silently* with a
+404 (GitHub hides private repos rather than returning 403). Public + no token
+removes that failure mode entirely.
 
-```powershell
-$env:GH_TOKEN = gh auth token     # or a persistent user env var
-```
-
-Symptom if it's missing, in `update.log`:
-`HttpError: 404 ... url: https://github.com/<owner>/<repo>/releases.atom`.
+If you ever make it private again, set `build.publish[0].private: true` and put a
+repo-scoped token in `GH_TOKEN`, otherwise the updater will 404 again.
 
 Notes: unsigned Windows builds still auto-update, but the first install shows a
 SmartScreen warning. An update downloads in the background and then offers
@@ -165,7 +160,6 @@ Environment variables (all optional):
 - `KANEO_WSL_DISTRO` — WSL distro for updates (default `Ubuntu`)
 - `KANEO_WSL_USER` — WSL user for updates (default `hsa19`)
 - `KANEO_COMPOSE_DIR` — compose directory in WSL (default `$HOME/kaneo`)
-- `GH_TOKEN` — required for app self-update, for the private repo
 
 ```powershell
 $env:KANEO_URL="https://kaneo.example.com"; npm start
