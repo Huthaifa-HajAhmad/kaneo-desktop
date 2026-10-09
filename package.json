@@ -1,7 +1,7 @@
 {
   "name": "kaneo-desktop",
   "productName": "Kaneo",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Desktop wrapper for a self-hosted Kaneo instance",
   "main": "main.js",
   "private": true,
@@ -55,6 +55,7 @@
         "provider": "github",
         "owner": "Huthaifa-HajAhmad",
         "repo": "kaneo-desktop",
+        "private": true,
         "releaseType": "release"
       }
     ]

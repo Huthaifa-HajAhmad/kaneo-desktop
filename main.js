@@ -41,6 +41,7 @@ let themeTimer = null;
 let updateTimer = null;
 let autoUpdater = null;
 let updatingKaneo = false;
+let blankReloads = 0;
 
 function layout() {
   if (!win || !barView || !contentView) return;
@@ -69,6 +70,22 @@ function setStatus(next) {
   send("kaneo:status", next);
 }
 
+// ---- app log -----------------------------------------------------------------
+// electron-updater is otherwise a black box, and a blank SPA is otherwise
+// silent. Both land in <userData>/update.log so problems are diagnosable.
+function logUpdate(level, ...args) {
+  const text = args
+    .map((a) => (a instanceof Error ? a.message : typeof a === "string" ? a : JSON.stringify(a)))
+    .join(" ");
+  const line = `[${new Date().toISOString()}] ${level.padEnd(5)} ${text}`;
+  try {
+    fs.appendFileSync(path.join(app.getPath("userData"), "update.log"), line + "\n");
+  } catch {
+    /* logging must never break the app */
+  }
+  console.log(`[app] ${line}`);
+}
+
 // ---- theme: mirror Kaneo's own background rather than guessing ---------------
 const READ_THEME = `(() => {
   try {
@@ -94,20 +111,42 @@ async function syncTheme() {
   }
 }
 
-// ---- update log --------------------------------------------------------------
-// electron-updater is otherwise a black box. Everything it does (and every
-// failure) lands in <userData>/update.log so an update can actually be watched.
-function logUpdate(level, ...args) {
-  const text = args
-    .map((a) => (a instanceof Error ? a.message : typeof a === "string" ? a : JSON.stringify(a)))
-    .join(" ");
-  const line = `[${new Date().toISOString()}] ${level.padEnd(5)} ${text}`;
+// ---- self-heal a blank SPA shell --------------------------------------------
+// Kaneo is a single-page app served with hashed asset names. After the backend
+// is upgraded those hashes change, and a cached index.html then points at chunks
+// that no longer exist. The server's SPA fallback answers those with index.html,
+// Chromium refuses to run HTML as a script, and React never mounts: a blank
+// white window. Nothing is "broken" so no load error fires — so check for an
+// empty root and force one cache-bypassing reload (bounded, to avoid a loop).
+async function healBlankShell() {
+  if (!contentView || contentView.webContents.isDestroyed()) return;
   try {
-    fs.appendFileSync(path.join(app.getPath("userData"), "update.log"), line + "\n");
+    const shell = await contentView.webContents.executeJavaScript(
+      `(() => {
+         const r = document.getElementById("root");
+         return r ? r.childElementCount : -1;
+       })()`,
+      true
+    );
+    if (typeof shell !== "number" || shell < 0) return; // not the SPA shell
+    if (shell > 0) {
+      blankReloads = 0; // rendered fine
+      return;
+    }
+    if (blankReloads >= 2) return; // give up rather than loop forever
+    blankReloads += 1;
+    logUpdate("warn", `Kaneo shell is empty (stale cached assets?); hard reload ${blankReloads}/2`);
+    contentView.webContents.reloadIgnoringCache();
   } catch {
-    /* logging must never break the app */
+    /* ignore */
   }
-  console.log(`[update] ${line}`);
+}
+
+function hardReloadKaneo() {
+  blankReloads = 0;
+  if (contentView && !contentView.webContents.isDestroyed()) {
+    contentView.webContents.reloadIgnoringCache();
+  }
 }
 
 // ---- update Kaneo itself (the containers) ----------------------------------
@@ -134,12 +173,11 @@ function runKaneoUpdate() {
   });
   child.on("close", (code) => {
     updatingKaneo = false;
-    setStatus("ready");
     if (code === 0) {
-      if (contentView && !contentView.webContents.isDestroyed()) {
-        contentView.webContents.reload();
-      }
+      setStatus("ready");
+      hardReloadKaneo(); // asset hashes almost certainly changed
     } else {
+      setStatus("offline");
       dialog.showErrorBox(
         "Kaneo update failed",
         (stderr || `docker compose exited with code ${code}`).trim().slice(0, 1500)
@@ -167,9 +205,13 @@ function loadUpdater() {
     debug: (...a) => logUpdate("debug", ...a),
   };
 
-  autoUpdater.on("checking-for-update", () => logUpdate("info", `checking (installed ${app.getVersion()})`));
+  autoUpdater.on("checking-for-update", () =>
+    logUpdate("info", `checking (installed ${app.getVersion()})`)
+  );
   autoUpdater.on("update-available", (i) => logUpdate("info", "available:", i?.version));
-  autoUpdater.on("update-not-available", (i) => logUpdate("info", "not available; latest is", i?.version));
+  autoUpdater.on("update-not-available", (i) =>
+    logUpdate("info", "not available; latest is", i?.version)
+  );
   autoUpdater.on("download-progress", (p) =>
     logUpdate("debug", `downloading ${Math.round(p?.percent ?? 0)}%`)
   );
@@ -274,6 +316,7 @@ function createWindow() {
   contentView.webContents.on("did-finish-load", () => {
     if (!updatingKaneo) setStatus("ready");
     syncTheme();
+    setTimeout(healBlankShell, 1500);
   });
   contentView.webContents.on("did-navigate-in-page", syncTheme);
 
@@ -314,7 +357,7 @@ function createWindow() {
 // ---- title bar menu ----------------------------------------------------------
 function showBarMenu() {
   const template = [
-    { label: "Reload Kaneo", click: () => contentView?.webContents.reload() },
+    { label: "Reload Kaneo", click: () => hardReloadKaneo() },
     { type: "separator" },
     { label: "Update Kaneo…", click: () => runKaneoUpdate() },
     {
