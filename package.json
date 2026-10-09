@@ -54,7 +54,8 @@
       {
         "provider": "github",
         "owner": "Huthaifa-HajAhmad",
-        "repo": "kaneo-desktop"
+        "repo": "kaneo-desktop",
+        "releaseType": "release"
       }
     ]
   }
