@@ -1,0 +1,61 @@
+{
+  "name": "kaneo-desktop",
+  "productName": "Kaneo",
+  "version": "1.0.0",
+  "description": "Desktop wrapper for a self-hosted Kaneo instance",
+  "main": "main.js",
+  "private": true,
+  "author": {
+    "name": "Kaneo Desktop"
+  },
+  "scripts": {
+    "start": "electron .",
+    "start:ps": "powershell -ExecutionPolicy Bypass -File ./run.ps1",
+    "icons": "electron tools/make-icons.js && node tools/make-ico.js",
+    "dist": "electron-builder --win",
+    "release": "electron-builder --win --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "^6.6.2"
+  },
+  "devDependencies": {
+    "electron": "^44.7.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "app.kaneo.desktop",
+    "productName": "Kaneo",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "titlebar.html",
+      "fonts/**",
+      "build/icon.ico",
+      "build/icon.png",
+      "package.json"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Huthaifa-HajAhmad",
+        "repo": "kaneo-desktop"
+      }
+    ]
+  }
+}
