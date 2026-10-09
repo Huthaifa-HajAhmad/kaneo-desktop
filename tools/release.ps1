@@ -10,9 +10,12 @@
 # The asset list matters. electron-updater reads `latest.yml` from the release to
 # learn the newest version and its sha512. A release without it is never offered.
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 
-$version = (Get-Content (Join-Path $PSScriptRoot ".." "package.json") -Raw | ConvertFrom-Json).version
+$root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+Set-Location $root
+
+$version = (Get-Content (Join-Path $root "package.json") -Raw | ConvertFrom-Json).version
 $tag = "v$version"
 $repo = "Huthaifa-HajAhmad/kaneo-desktop"
 
@@ -24,31 +27,30 @@ Write-Host "==> Building $tag" -ForegroundColor Cyan
 npm run dist
 if ($LASTEXITCODE -ne 0) { throw "build failed" }
 
-$exe = "dist/Kaneo-Setup-$version.exe"
-foreach ($f in @($exe, "$exe.blockmap", "dist/latest.yml")) {
+$exe = Join-Path $root "dist\Kaneo-Setup-$version.exe"
+$blockmap = "$exe.blockmap"
+$yml = Join-Path $root "dist\latest.yml"
+foreach ($f in @($exe, $blockmap, $yml)) {
   if (-not (Test-Path $f)) { throw "expected build output missing: $f" }
 }
 
 Write-Host "==> Tagging $tag" -ForegroundColor Cyan
-git rev-parse -q --verify "refs/tags/$tag" *> $null
-if ($LASTEXITCODE -ne 0) {
+if (-not (git tag -l $tag)) {
   git tag $tag
   git push origin $tag
 } else {
   Write-Host "    tag already exists"
 }
 
-$assets = @($exe, "$exe.blockmap", "dist/latest.yml")
-
 Write-Host "==> Publishing" -ForegroundColor Cyan
-gh release view $tag --repo $repo *> $null
-if ($LASTEXITCODE -eq 0) {
-  gh release upload $tag @assets --repo $repo --clobber
+$existing = gh release view $tag --repo $repo --json tagName 2>$null
+if ($LASTEXITCODE -eq 0 -and $existing) {
+  gh release upload $tag $exe $blockmap $yml --repo $repo --clobber
 } else {
-  gh release create $tag @assets --repo $repo --latest `
+  gh release create $tag $exe $blockmap $yml --repo $repo --latest `
     --title "Kaneo Desktop $version" `
     --notes "Desktop wrapper for a self-hosted Kaneo instance."
 }
-
 if ($LASTEXITCODE -ne 0) { throw "publish failed" }
+
 Write-Host "==> https://github.com/$repo/releases/tag/$tag" -ForegroundColor Green
