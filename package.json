@@ -13,7 +13,7 @@
     "start:ps": "powershell -ExecutionPolicy Bypass -File ./run.ps1",
     "icons": "electron tools/make-icons.js && node tools/make-ico.js",
     "dist": "electron-builder --win",
-    "release": "electron-builder --win --publish always"
+    "release": "powershell -ExecutionPolicy Bypass -File ./tools/release.ps1"
   },
   "dependencies": {
     "electron-updater": "^6.6.2"

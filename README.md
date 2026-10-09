@@ -101,15 +101,20 @@ bump it.
 **inert unless the app is packaged** — running from source it does nothing, and
 "Check for app updates…" is grayed out.
 
-Publishing is wired to GitHub Releases at `Huthaifa-HajAhmad/kaneo-desktop`
-(`build.publish` in `package.json`):
+`v1.0.0` is already published as the baseline. To cut the next one:
 
-1. `npm run dist` builds `dist\Kaneo-Setup-<version>.exe`.
-2. `npm run release` builds and uploads it as a GitHub release. It needs a token:
-   `$env:GH_TOKEN = gh auth token` before running.
-3. Bump `version` in `package.json` for each release. The updater compares the
-   published version against the installed one, so you need at least two.
-4. A new machine installs once from the release page, then self-updates.
+1. Bump `version` in `package.json` and commit it — the updater compares the
+   published version against the installed one.
+2. `$env:GH_TOKEN = gh auth token`, then `npm run release`.
+
+`tools/release.ps1` builds the installer, tags `v<version>`, pushes the tag, and
+attaches three assets: `Kaneo-Setup-<version>.exe`, its `.blockmap`, and
+`latest.yml`. That last file is what the updater actually reads — a release
+without it is never offered.
+
+(It doesn't call electron-builder's `--publish always`, because that requires the
+git tag to exist first or GitHub rejects it with "Published releases must have a
+valid tag". The script tags before it uploads.)
 
 **Private repo caveat:** GitHub only serves release assets from a private repo
 with authentication, so the updater needs `GH_TOKEN` set in the environment on any
