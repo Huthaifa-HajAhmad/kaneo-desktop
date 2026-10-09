@@ -8,8 +8,8 @@ instead of a browser tab.
 - Backend: Kaneo + PostgreSQL, running in Docker inside WSL2 Ubuntu (`~/kaneo`).
 - Frontend: this Electron app, running on Windows, pointed at `http://localhost:5173`.
 - WSL2 forwards `localhost`, so the Windows app can reach the containers directly.
-- Repo: https://github.com/Huthaifa-HajAhmad/kaneo-desktop (private) — used as the
-  release feed for shell updates.
+- Repo: https://github.com/Huthaifa-HajAhmad/kaneo-desktop (private) — the release
+  feed for shell updates. Baseline release: `v1.0.2`.
 
 ## Run it
 
@@ -60,6 +60,18 @@ check for app updates, dev tools, quit.
 Because the window is frameless, Windows 11 snap-layout hover on the maximize
 button is unavailable (snapping via drag and `Win`+arrows still works).
 
+## When the UI goes blank white
+
+Kaneo is a single-page app served with hashed asset filenames. Upgrading the
+backend changes those hashes, and a cached `index.html` then references chunks
+that no longer exist. The server's SPA fallback answers them with `index.html`,
+Chromium refuses to execute HTML as a script, and React never mounts — a blank
+white window. Nothing *failed* to load, so no error fires and nothing retries.
+
+So the app watches for it: ~1.5s after each load it checks whether `#root` has
+any children, and if not, forces a cache-bypassing reload (at most twice, so it
+can't loop). `⋯ → Reload Kaneo` is also a hard reload for the same reason.
+
 ## App icon
 
 `build/icon.svg` is the master: Kaneo's `#141414` tile, its 6% white hairline, and
@@ -87,7 +99,7 @@ Title bar `⋯` → **Update Kaneo…** runs, in WSL:
 cd $HOME/kaneo && docker compose pull && docker compose up -d
 ```
 
-and reloads the window when it finishes.
+and then hard-reloads the window, because the asset hashes will have changed.
 
 `~/kaneo/.env` is set to `KANEO_IMAGE_TAG=2`, so a pull follows the newest 2.x
 release; the stack currently runs `ghcr.io/usekaneo/kaneo:2`. Pin an exact version
@@ -101,7 +113,7 @@ bump it.
 **inert unless the app is packaged** — running from source it does nothing, and
 "Check for app updates…" is grayed out.
 
-`v1.0.0` is already published as the baseline. To cut the next one:
+`v1.0.2` is the published baseline. To cut the next one:
 
 1. Bump `version` in `package.json` and commit it — the updater compares the
    published version against the installed one.
@@ -116,20 +128,34 @@ without it is never offered.
 git tag to exist first or GitHub rejects it with "Published releases must have a
 valid tag". The script tags before it uploads.)
 
-**Private repo caveat:** GitHub only serves release assets from a private repo
-with authentication, so the updater needs `GH_TOKEN` set in the environment on any
-machine that should auto-update. To drop that requirement, make the repo public:
+**Private repo — this bit is easy to get wrong.** Because the repo is private,
+GitHub only serves the release feed to an authenticated request, and
+`electron-updater` only reads `GH_TOKEN` from the environment when the publish
+config is flagged private. Without it the check silently gets a 404 (GitHub hides
+private repos rather than returning 403). So `build.publish[0].private` is `true`,
+and any machine that should auto-update needs:
 
 ```powershell
-gh repo edit Huthaifa-HajAhmad/kaneo-desktop --visibility public --accept-visibility-change-consequences
+$env:GH_TOKEN = gh auth token     # or a persistent user env var
 ```
 
-Nothing in the repo is sensitive (it's a UI shell; your Kaneo data lives in Docker
-volumes, not here), but that's your call.
+Symptom if it's missing, in `update.log`:
+`HttpError: 404 ... url: https://github.com/<owner>/<repo>/releases.atom`.
 
 Notes: unsigned Windows builds still auto-update, but the first install shows a
 SmartScreen warning. An update downloads in the background and then offers
-"Restart now" / "Later".
+"Restart now" / "Later". Differential downloads may fall back to a full download
+(`Cannot parse blockmap`) — harmless, just more bandwidth.
+
+## Logs
+
+`%APPDATA%\Kaneo\update.log` records app startup, every update check, and the
+blank-shell recovery. It is the first place to look when an update doesn't
+appear.
+
+(Electron derives `userData` from `productName`, so a packaged build and a
+source run share `%APPDATA%\Kaneo`. Fine in practice — just don't run both at
+once.)
 
 ## Configuration
 
@@ -139,6 +165,7 @@ Environment variables (all optional):
 - `KANEO_WSL_DISTRO` — WSL distro for updates (default `Ubuntu`)
 - `KANEO_WSL_USER` — WSL user for updates (default `hsa19`)
 - `KANEO_COMPOSE_DIR` — compose directory in WSL (default `$HOME/kaneo`)
+- `GH_TOKEN` — required for app self-update, for the private repo
 
 ```powershell
 $env:KANEO_URL="https://kaneo.example.com"; npm start
@@ -158,6 +185,9 @@ $env:KANEO_URL="https://kaneo.example.com"; npm start
 `ELECTRON_RUN_AS_NODE=1` set (some Electron-based terminals do this). Use
 `.\run.ps1`, or clear it: `Remove-Item Env:\ELECTRON_RUN_AS_NODE`.
 
+Blank white window — see "When the UI goes blank white". `⋯ → Reload Kaneo`
+fixes it immediately.
+
 ## Packaging
 
 electron-builder is already configured (`build` key in `package.json`): NSIS
@@ -165,7 +195,7 @@ target, per-user install, icon from `build/icon.ico`.
 
 ```powershell
 npm run dist      # dist\Kaneo-Setup-<version>.exe
-npm run release   # same, plus upload to GitHub Releases
+npm run release   # same, plus tag and upload to GitHub Releases
 ```
 
 A packaged app still points at a local backend, so it only makes sense as a
