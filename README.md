@@ -8,6 +8,8 @@ instead of a browser tab.
 - Backend: Kaneo + PostgreSQL, running in Docker inside WSL2 Ubuntu (`~/kaneo`).
 - Frontend: this Electron app, running on Windows, pointed at `http://localhost:5173`.
 - WSL2 forwards `localhost`, so the Windows app can reach the containers directly.
+- Repo: https://github.com/Huthaifa-HajAhmad/kaneo-desktop (private) — used as the
+  release feed for shell updates.
 
 ## Run it
 
@@ -87,17 +89,11 @@ cd $HOME/kaneo && docker compose pull && docker compose up -d
 
 and reloads the window when it finishes.
 
-**Important:** `~/kaneo/.env` currently pins `KANEO_IMAGE_TAG=2.28.3`, so a pull
-re-fetches that same release and nothing moves forward. To get rolling updates
-within the 2.x line, set it to the major tag:
-
-```
-KANEO_IMAGE_TAG=2
-```
-
-Both `2` and `2.28.3` exist on GHCR (verified), so either is valid. `2` trades a
-pinned version for automatic 2.x upgrades; pin an exact version if you'd rather
-review each release yourself.
+`~/kaneo/.env` is set to `KANEO_IMAGE_TAG=2`, so a pull follows the newest 2.x
+release; the stack currently runs `ghcr.io/usekaneo/kaneo:2`. Pin an exact version
+instead (e.g. `KANEO_IMAGE_TAG=2.28.3`) if you'd rather review each release
+yourself — but note that a pinned tag turns this action into a no-op until you
+bump it.
 
 ### This desktop shell
 
@@ -105,12 +101,26 @@ review each release yourself.
 **inert unless the app is packaged** — running from source it does nothing, and
 "Check for app updates…" is grayed out.
 
-To turn it on:
+Publishing is wired to GitHub Releases at `Huthaifa-HajAhmad/kaneo-desktop`
+(`build.publish` in `package.json`):
 
-1. Set a real publish target in `package.json` → `build.publish[0].url`
-   (a generic HTTP(S) host, or switch the provider to `github`).
-2. `npm run dist` to build the installer, `npm run release` to build and upload.
-3. Ship at least two versions: the updater compares against what's published.
+1. `npm run dist` builds `dist\Kaneo-Setup-<version>.exe`.
+2. `npm run release` builds and uploads it as a GitHub release. It needs a token:
+   `$env:GH_TOKEN = gh auth token` before running.
+3. Bump `version` in `package.json` for each release. The updater compares the
+   published version against the installed one, so you need at least two.
+4. A new machine installs once from the release page, then self-updates.
+
+**Private repo caveat:** GitHub only serves release assets from a private repo
+with authentication, so the updater needs `GH_TOKEN` set in the environment on any
+machine that should auto-update. To drop that requirement, make the repo public:
+
+```powershell
+gh repo edit Huthaifa-HajAhmad/kaneo-desktop --visibility public --accept-visibility-change-consequences
+```
+
+Nothing in the repo is sensitive (it's a UI shell; your Kaneo data lives in Docker
+volumes, not here), but that's your call.
 
 Notes: unsigned Windows builds still auto-update, but the first install shows a
 SmartScreen warning. An update downloads in the background and then offers
@@ -150,7 +160,7 @@ target, per-user install, icon from `build/icon.ico`.
 
 ```powershell
 npm run dist      # dist\Kaneo-Setup-<version>.exe
-npm run release   # same, plus upload to the configured publish target
+npm run release   # same, plus upload to GitHub Releases
 ```
 
 A packaged app still points at a local backend, so it only makes sense as a
