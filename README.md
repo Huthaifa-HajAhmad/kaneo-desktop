@@ -9,7 +9,10 @@ instead of a browser tab.
 - Frontend: this Electron app, running on Windows, pointed at `http://localhost:5173`.
 - WSL2 forwards `localhost`, so the Windows app can reach the containers directly.
 - Repo: https://github.com/Huthaifa-HajAhmad/kaneo-desktop (public) — the release
-  feed for shell updates. Baseline release: `v1.0.2`.
+  feed for shell updates. Baseline release: `v1.0.3`.
+- Profiles are kept separate on purpose: the installed app uses `%APPDATA%\Kaneo`,
+  a source run uses `%APPDATA%\Kaneo Dev`. Two Chromium instances sharing one
+  profile can corrupt cookies, which looks like being randomly signed out.
 
 ## Run it
 
@@ -54,11 +57,37 @@ It also reflects live state:
   amber "Offline" when the backend stops answering, muted "Updating…" during an update.
 - **Focus**: the wordmark dims when the window loses focus, like native chrome.
 
-The `⋯` button (and right-clicking the bar) opens the menu: reload, update Kaneo,
-check for app updates, dev tools, quit.
+The `⋯` button (and right-clicking the bar) opens the menu: reconnect, repair
+backend, hard reload, update Kaneo, check for app updates, dev tools, quit.
 
 Because the window is frameless, Windows 11 snap-layout hover on the maximize
 button is unavailable (snapping via drag and `Win`+arrows still works).
+
+## When Kaneo can't be reached
+
+The window never shows a blank page or a sign-in screen just because the backend
+is down. Before loading anything, the app probes `GET /api/health`:
+
+- **Reachable** → load Kaneo.
+- **Not reachable** → show a local offline screen (Kaneo's mark, what's wrong, the
+  URL, and two actions). It re-probes every 8 s and loads Kaneo the moment the API
+  answers.
+
+This matters more than it sounds. Kaneo's SPA cannot validate your session when
+its API is unreachable, so it renders a **sign-in page** — which looks exactly
+like "I got signed out". You weren't: the session cookie is untouched and still
+valid on the server. Probing first keeps that lie off the screen.
+
+The two actions, also in the `⋯` menu:
+
+- **Reconnect now** — probe immediately.
+- **Repair backend** — `wsl --shutdown`, then boot the distro and
+  `docker compose up -d`. This is the fix for a broken Windows↔WSL localhost
+  relay, which WSL2 drops on host sleep/resume. It asks first, because it stops
+  every WSL distro for a few seconds.
+
+Switching *away* from a working page takes two consecutive failed probes (~16 s),
+so a single blip won't yank the UI out from under you.
 
 ## When the UI goes blank white
 
@@ -144,13 +173,12 @@ SmartScreen warning. An update downloads in the background and then offers
 
 ## Logs
 
-`%APPDATA%\Kaneo\update.log` records app startup, every update check, and the
-blank-shell recovery. It is the first place to look when an update doesn't
-appear.
+`<userData>\update.log` is the app log: startup, every update check, every
+reachability transition, load failures, and the blank-shell recovery. It's the
+first place to look for anything that seems to happen "for no reason".
 
-(Electron derives `userData` from `productName`, so a packaged build and a
-source run share `%APPDATA%\Kaneo`. Fine in practice — just don't run both at
-once.)
+- Installed app: `%APPDATA%\Kaneo\update.log`
+- Source run: `%APPDATA%\Kaneo Dev\update.log`
 
 ## Configuration
 

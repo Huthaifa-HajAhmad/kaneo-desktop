@@ -116,7 +116,8 @@
         background: var(--bar-warn);
       }
       .status[data-state="loading"] .dot,
-      .status[data-state="updating"] .dot {
+      .status[data-state="updating"] .dot,
+      .status[data-state="repairing"] .dot {
         background: var(--bar-muted);
         animation: pulse 1.6s var(--ease) infinite;
       }
@@ -304,7 +305,13 @@
           statusEl.dataset.on = "1";
           statusEl.dataset.state = s;
           statusText.textContent =
-            s === "offline" ? "Offline" : s === "updating" ? "Updating…" : "Connecting…";
+            s === "offline"
+              ? "Offline"
+              : s === "updating"
+                ? "Updating…"
+                : s === "repairing"
+                  ? "Repairing…"
+                  : "Connecting…";
         });
       }
 

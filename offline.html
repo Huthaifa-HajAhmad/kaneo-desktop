@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Kaneo — connecting</title>
+    <style>
+      @font-face {
+        font-family: "Geist";
+        font-style: normal;
+        font-weight: 100 900;
+        font-display: block;
+        src: url("./fonts/geist-latin.woff2") format("woff2-variations");
+      }
+      @font-face {
+        font-family: "Geist";
+        font-style: normal;
+        font-weight: 100 900;
+        font-display: block;
+        src: url("./fonts/geist-latin-ext.woff2") format("woff2-variations");
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        background: #141414;
+        color: #f5f5f5;
+        font-family: "Geist", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        display: grid;
+        place-items: center;
+        user-select: none;
+      }
+
+      .card {
+        width: min(560px, 86vw);
+      }
+      .mark {
+        width: 34px;
+        height: 34px;
+        color: #f5f5f5;
+        opacity: 0.92;
+      }
+      h1 {
+        font-size: 19px;
+        font-weight: 560;
+        letter-spacing: -0.011em;
+        margin: 20px 0 10px;
+      }
+      p {
+        font-size: 13.5px;
+        line-height: 1.62;
+        color: #a3a3a3;
+        margin: 0 0 12px;
+      }
+      code {
+        font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+        font-size: 12.5px;
+        color: #d4d4d4;
+      }
+
+      .reason {
+        display: inline-block;
+        font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+        font-size: 11.5px;
+        color: #9a9a9a;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 8px;
+        padding: 7px 10px;
+        margin-top: 2px;
+        max-width: 100%;
+        overflow-wrap: anywhere;
+      }
+
+      .actions {
+        display: flex;
+        gap: 10px;
+        margin-top: 26px;
+      }
+      button {
+        font: inherit;
+        font-size: 13px;
+        font-weight: 520;
+        border-radius: 9px;
+        padding: 9px 16px;
+        border: 1px solid transparent;
+        cursor: pointer;
+        transition: background-color 120ms cubic-bezier(0.23, 1, 0.32, 1),
+          border-color 120ms cubic-bezier(0.23, 1, 0.32, 1);
+      }
+      button:focus-visible {
+        outline: 2px solid #f5f5f5;
+        outline-offset: 2px;
+      }
+      .primary {
+        background: #f5f5f5;
+        color: #141414;
+      }
+      .primary:hover {
+        background: #ffffff;
+      }
+      .ghost {
+        background: transparent;
+        color: #f5f5f5;
+        border-color: rgba(255, 255, 255, 0.14);
+      }
+      .ghost:hover {
+        background: rgba(255, 255, 255, 0.06);
+      }
+
+      .hint {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 22px;
+        font-size: 11.5px;
+        color: #7d7d7d;
+      }
+      .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #8f8f8f;
+        animation: pulse 1.6s cubic-bezier(0.23, 1, 0.32, 1) infinite;
+        flex: none;
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 0.3;
+        }
+        50% {
+          opacity: 1;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .dot {
+          animation: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <svg class="mark" viewBox="22 22 92 92" aria-hidden="true">
+        <path
+          fill="currentColor"
+          d="M62.6855 103.724C58.5716 104.595 56.0001 103.265 56 101.66L56 70.0264C56 69.8606 56.0032 69.686 56.0088 69.5069C56.0039 69.3848 56.001 69.249 56.001 69.0977L56.001 37.9444C56.015 36.6524 56.2588 35.7449 59.2588 35.1094L73.3145 32.2764C77.4285 31.405 80 32.7365 80 34.3408L80 65.9746C80 66.1409 79.9978 66.3155 79.9922 66.4951C79.997 66.6169 79.999 66.7526 79.999 66.9033L79.999 98.0567C79.9849 99.3483 79.7408 100.256 76.7412 100.892L62.6855 103.724Z"
+        />
+        <path
+          fill="currentColor"
+          d="M30.6855 111.723C26.5716 112.594 24.0001 111.264 24 109.659L24 78.0244C24 77.8588 24.0032 77.6848 24.0088 77.5059C24.0039 77.3838 24.001 77.248 24.001 77.0967L24.001 45.9434C24.015 44.6514 24.2588 43.7439 27.2588 43.1084L41.3145 40.2754C45.4285 39.404 48 40.7355 48 42.3399L48 73.9737C48 74.1399 47.9978 74.3146 47.9922 74.4942C47.997 74.6159 47.999 74.7517 47.999 74.9024L47.999 106.056C47.9849 107.347 47.7408 108.255 44.7412 108.891L30.6855 111.723Z"
+        />
+        <path
+          fill="currentColor"
+          d="M105.314 24.2754C109.428 23.404 112 24.7355 112 26.3398V37.1845L94.0576 60.5019L111.999 82.7802V90.0576C111.985 91.3492 111.741 92.2571 108.741 92.8925L94.6855 95.7246C90.5717 96.596 88.0002 95.2654 88 93.6611V62.0254C88 61.8598 88.0032 61.6856 88.0088 61.5068C88.0039 61.3848 88.001 61.2488 88.001 61.0976V29.9433C88.0151 28.6516 88.2591 27.7438 91.2588 27.1084L105.314 24.2754Z"
+        />
+      </svg>
+
+      <h1>Kaneo isn't responding</h1>
+      <p>
+        The app is running, but the Kaneo backend at <code id="url">localhost:5173</code> didn't
+        answer. Your account and data are safe on the server — this is not a sign-out.
+      </p>
+      <div class="reason" id="reason">waiting for a response</div>
+
+      <div class="actions">
+        <button class="primary" id="retry">Reconnect now</button>
+        <button class="ghost" id="repair">Repair backend</button>
+      </div>
+
+      <div class="hint">
+        <span class="dot"></span>
+        <span>Retrying automatically. Usually this means the WSL containers or the Windows↔WSL
+          connection needs a restart — <b>Repair backend</b> does both.</span>
+      </div>
+    </div>
+
+    <script>
+      const params = new URLSearchParams(location.search);
+      const reason = params.get("reason");
+      const url = params.get("url");
+      if (url) document.getElementById("url").textContent = url.replace(/^https?:\/\//, "").replace(/\/$/, "");
+      if (reason) document.getElementById("reason").textContent = reason;
+
+      const shell = window.kaneoShell;
+      document.getElementById("retry").addEventListener("click", () => shell && shell.retry());
+      document.getElementById("repair").addEventListener("click", () => shell && shell.repair());
+      window.addEventListener("keydown", (e) => {
+        if (e.key === "r" && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          shell && shell.retry();
+        }
+      });
+    </script>
+  </body>
+</html>

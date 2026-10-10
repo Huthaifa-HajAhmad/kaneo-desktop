@@ -25,11 +25,20 @@ const path = require("node:path");
 const fs = require("node:fs");
 const { spawn } = require("node:child_process");
 
+// Keep development runs out of the installed app's profile. Two Chromium
+// instances sharing one userData directory can corrupt cookies and storage,
+// which looks exactly like being randomly signed out.
+if (!app.isPackaged) {
+  app.setPath("userData", path.join(app.getPath("appData"), "Kaneo Dev"));
+}
+
 const APP_URL = process.env.KANEO_URL || "http://localhost:5173";
 const BAR_HEIGHT = 40; // px, must match --bar-h in titlebar.html
 const DARK_BG = "#141414"; // Kaneo's dark --background token
+const PROBE_INTERVAL_MS = 8000;
+const FAILS_BEFORE_OFFLINE = 2;
 
-// How the backend is updated. Defaults match the WSL setup in the README.
+// How the backend is repaired/updated. Defaults match the WSL setup in the README.
 const WSL_DISTRO = process.env.KANEO_WSL_DISTRO || "Ubuntu";
 const WSL_USER = process.env.KANEO_WSL_USER || "hsa19";
 const COMPOSE_DIR = process.env.KANEO_COMPOSE_DIR || "$HOME/kaneo";
@@ -38,10 +47,20 @@ let win = null;
 let barView = null;
 let contentView = null;
 let themeTimer = null;
+let reachTimer = null;
 let updateTimer = null;
 let autoUpdater = null;
+
 let updatingKaneo = false;
+let repairing = false;
 let blankReloads = 0;
+let failStreak = 0;
+let ticking = false;
+
+// null | "app" | "offline"
+let showing = null;
+let offlineReason = "";
+const REASON_NO_RESPONSE = `no response from ${APP_URL}`;
 
 function layout() {
   if (!win || !barView || !contentView) return;
@@ -62,7 +81,7 @@ function send(channel, payload) {
 }
 
 // ---- status shown in the bar ------------------------------------------------
-// "ready" | "loading" | "offline" | "updating"
+// "ready" | "loading" | "offline" | "updating" | "repairing"
 let status = null;
 function setStatus(next) {
   if (next === status) return;
@@ -71,9 +90,9 @@ function setStatus(next) {
 }
 
 // ---- app log -----------------------------------------------------------------
-// electron-updater is otherwise a black box, and a blank SPA is otherwise
-// silent. Both land in <userData>/update.log so problems are diagnosable.
-function logUpdate(level, ...args) {
+// electron-updater and the reachability state machine are otherwise invisible.
+// Everything lands in <userData>/update.log so problems are diagnosable.
+function logEvent(level, ...args) {
   const text = args
     .map((a) => (a instanceof Error ? a.message : typeof a === "string" ? a : JSON.stringify(a)))
     .join(" ");
@@ -99,7 +118,7 @@ const READ_THEME = `(() => {
 
 let theme = null;
 async function syncTheme() {
-  if (!contentView || contentView.webContents.isDestroyed()) return;
+  if (showing !== "app" || !contentView || contentView.webContents.isDestroyed()) return;
   try {
     const t = await contentView.webContents.executeJavaScript(READ_THEME, true);
     if (t && t !== theme) {
@@ -111,31 +130,99 @@ async function syncTheme() {
   }
 }
 
-// ---- self-heal a blank SPA shell --------------------------------------------
-// Kaneo is a single-page app served with hashed asset names. After the backend
-// is upgraded those hashes change, and a cached index.html then points at chunks
-// that no longer exist. The server's SPA fallback answers those with index.html,
-// Chromium refuses to run HTML as a script, and React never mounts: a blank
-// white window. Nothing is "broken" so no load error fires — so check for an
-// empty root and force one cache-bypassing reload (bounded, to avoid a loop).
-async function healBlankShell() {
-  if (!contentView || contentView.webContents.isDestroyed()) return;
+// ---- reachability -------------------------------------------------------------
+// Never load the SPA unless the API answers. If Kaneo's API is unreachable the
+// SPA can't validate the session and renders a sign-in page, which reads as
+// "you were signed out" when nothing of the sort happened. Probing first keeps
+// that misleading state off the screen.
+async function probeBackend(timeoutMs = 3500) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const shell = await contentView.webContents.executeJavaScript(
-      `(() => {
-         const r = document.getElementById("root");
-         return r ? r.childElementCount : -1;
-       })()`,
-      true
-    );
-    if (typeof shell !== "number" || shell < 0) return; // not the SPA shell
-    if (shell > 0) {
-      blankReloads = 0; // rendered fine
+    const res = await fetch(`${APP_URL}/api/health`, { signal: controller.signal });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function showApp() {
+  if (!contentView || contentView.webContents.isDestroyed()) return;
+  showing = "app";
+  offlineReason = "";
+  setStatus("loading");
+  contentView.webContents.loadURL(APP_URL);
+}
+
+function showOffline(reason) {
+  if (!contentView || contentView.webContents.isDestroyed()) return;
+  const next = String(reason || REASON_NO_RESPONSE).trim();
+  const unchanged = showing === "offline" && offlineReason === next;
+  showing = "offline";
+  offlineReason = next;
+  setStatus("offline");
+  if (unchanged) return; // don't reload the page just to say the same thing
+  contentView.webContents.loadFile(path.join(__dirname, "offline.html"), {
+    query: { url: APP_URL, reason: next },
+  });
+}
+
+async function tick() {
+  if (ticking || repairing) return;
+  ticking = true;
+  try {
+    const ok = await probeBackend();
+    if (ok) {
+      if (failStreak > 0) logEvent("info", "backend reachable again");
+      failStreak = 0;
+      if (showing !== "app") {
+        logEvent("info", "backend reachable; loading Kaneo");
+        showApp();
+      }
       return;
     }
-    if (blankReloads >= 2) return; // give up rather than loop forever
+
+    failStreak += 1;
+    if (showing === "app") {
+      if (failStreak >= FAILS_BEFORE_OFFLINE) {
+        logEvent(
+          "warn",
+          `backend unreachable (${failStreak} consecutive probes); showing the offline screen`
+        );
+        showOffline(REASON_NO_RESPONSE);
+      }
+    } else {
+      // Keep the existing reason so the page isn't reloaded on every probe.
+      showOffline(offlineReason || REASON_NO_RESPONSE);
+    }
+  } finally {
+    ticking = false;
+  }
+}
+
+// ---- self-heal a blank SPA shell --------------------------------------------
+// Kaneo serves hashed asset names. After a backend upgrade a cached index.html
+// points at chunks that no longer exist; the SPA fallback answers those with
+// HTML, Chromium won't execute it, and React never mounts: a blank window with
+// no load error to react to. So check for an empty root and force one
+// cache-bypassing reload (bounded, to avoid a loop).
+async function healBlankShell() {
+  if (showing !== "app" || !contentView || contentView.webContents.isDestroyed()) return;
+  try {
+    const children = await contentView.webContents.executeJavaScript(
+      `(() => { const r = document.getElementById("root"); return r ? r.childElementCount : -1; })()`,
+      true
+    );
+    if (typeof children !== "number" || children < 0) return; // not the SPA shell
+    if (children > 0) {
+      blankReloads = 0;
+      return;
+    }
+    if (blankReloads >= 2) return;
     blankReloads += 1;
-    logUpdate("warn", `Kaneo shell is empty (stale cached assets?); hard reload ${blankReloads}/2`);
+    logEvent("warn", `Kaneo shell is empty (stale cached assets?); hard reload ${blankReloads}/2`);
     contentView.webContents.reloadIgnoringCache();
   } catch {
     /* ignore */
@@ -147,6 +234,59 @@ function hardReloadKaneo() {
   if (contentView && !contentView.webContents.isDestroyed()) {
     contentView.webContents.reloadIgnoringCache();
   }
+}
+
+// ---- repair: restart WSL, then bring the containers back --------------------
+async function confirmRepair() {
+  if (repairing) return;
+  const { response } = await dialog.showMessageBox({
+    type: "warning",
+    buttons: ["Repair backend", "Cancel"],
+    defaultId: 0,
+    cancelId: 1,
+    title: "Repair backend",
+    message: "Restart WSL and the Kaneo containers?",
+    detail:
+      "This stops every WSL distro for a few seconds and then restarts Kaneo. " +
+      "Any other WSL work in progress is interrupted.",
+  });
+  if (response === 0) runRepair();
+}
+
+function runRepair() {
+  if (repairing) return;
+  repairing = true;
+  setStatus("repairing");
+  logEvent("warn", "repair: restarting WSL");
+
+  const shutdown = spawn("wsl", ["--shutdown"], { windowsHide: true });
+  shutdown.on("error", (err) => logEvent("error", "wsl --shutdown failed:", err));
+  shutdown.on("close", (code) => {
+    logEvent("info", `wsl --shutdown exited ${code}; booting ${WSL_DISTRO} and containers`);
+
+    const boot = spawn(
+      "wsl",
+      ["-d", WSL_DISTRO, "-u", WSL_USER, "--", "bash", "-lc", `cd ${COMPOSE_DIR} && docker compose up -d`],
+      { windowsHide: true }
+    );
+    let stderr = "";
+    boot.stderr.on("data", (d) => {
+      stderr += d;
+    });
+    boot.on("error", (err) => {
+      stderr += err.message;
+    });
+    boot.on("close", (code) => {
+      repairing = false;
+      if (code === 0) {
+        logEvent("info", "repair: containers started; waiting for the API");
+      } else {
+        logEvent("error", `repair: docker compose exited ${code}`, stderr.trim().slice(0, 400));
+      }
+      failStreak = FAILS_BEFORE_OFFLINE;
+      tick();
+    });
+  });
 }
 
 // ---- update Kaneo itself (the containers) ----------------------------------
@@ -174,10 +314,10 @@ function runKaneoUpdate() {
   child.on("close", (code) => {
     updatingKaneo = false;
     if (code === 0) {
-      setStatus("ready");
-      hardReloadKaneo(); // asset hashes almost certainly changed
+      logEvent("info", "Kaneo containers updated; reloading (asset hashes changed)");
+      showApp();
     } else {
-      setStatus("offline");
+      setStatus("ready");
       dialog.showErrorBox(
         "Kaneo update failed",
         (stderr || `docker compose exited with code ${code}`).trim().slice(0, 1500)
@@ -193,31 +333,31 @@ function loadUpdater() {
   try {
     ({ autoUpdater } = require("electron-updater"));
   } catch {
-    logUpdate("error", "electron-updater is not installed");
+    logEvent("error", "electron-updater is not installed");
     return null;
   }
 
   autoUpdater.autoDownload = true;
   autoUpdater.logger = {
-    info: (...a) => logUpdate("info", ...a),
-    warn: (...a) => logUpdate("warn", ...a),
-    error: (...a) => logUpdate("error", ...a),
-    debug: (...a) => logUpdate("debug", ...a),
+    info: (...a) => logEvent("info", ...a),
+    warn: (...a) => logEvent("warn", ...a),
+    error: (...a) => logEvent("error", ...a),
+    debug: (...a) => logEvent("debug", ...a),
   };
 
   autoUpdater.on("checking-for-update", () =>
-    logUpdate("info", `checking (installed ${app.getVersion()})`)
+    logEvent("info", `checking (installed ${app.getVersion()})`)
   );
-  autoUpdater.on("update-available", (i) => logUpdate("info", "available:", i?.version));
+  autoUpdater.on("update-available", (i) => logEvent("info", "available:", i?.version));
   autoUpdater.on("update-not-available", (i) =>
-    logUpdate("info", "not available; latest is", i?.version)
+    logEvent("info", "not available; latest is", i?.version)
   );
   autoUpdater.on("download-progress", (p) =>
-    logUpdate("debug", `downloading ${Math.round(p?.percent ?? 0)}%`)
+    logEvent("debug", `downloading ${Math.round(p?.percent ?? 0)}%`)
   );
-  autoUpdater.on("error", (err) => logUpdate("error", err));
+  autoUpdater.on("error", (err) => logEvent("error", err));
   autoUpdater.on("update-downloaded", async (info) => {
-    logUpdate("info", "downloaded:", info?.version);
+    logEvent("info", "downloaded:", info?.version);
     const { response } = await dialog.showMessageBox({
       type: "info",
       buttons: ["Restart now", "Later"],
@@ -228,7 +368,7 @@ function loadUpdater() {
       detail: "Restart to finish updating.",
     });
     if (response === 0) autoUpdater.quitAndInstall();
-    else logUpdate("info", "update deferred to next launch");
+    else logEvent("info", "update deferred to next launch");
   });
 
   return autoUpdater;
@@ -242,15 +382,14 @@ function checkAppUpdates(interactive) {
         type: "info",
         title: "App updates",
         message: "App updates are only available in a packaged build.",
-        detail:
-          "Install electron-builder, set a publish target in package.json, then run `npm run dist`. See README.",
+        detail: "Run `npm run dist` and use the installed app. See README.",
       });
     }
     return;
   }
-  logUpdate("info", "manual check requested");
+  logEvent("info", "manual check requested");
   u.checkForUpdates().catch((err) => {
-    logUpdate("error", err);
+    logEvent("error", err);
     if (interactive) {
       dialog.showMessageBox({
         type: "error",
@@ -264,9 +403,9 @@ function checkAppUpdates(interactive) {
 function startAutoUpdate() {
   const u = loadUpdater();
   if (!u) return;
-  u.checkForUpdatesAndNotify().catch((err) => logUpdate("error", err));
+  u.checkForUpdatesAndNotify().catch((err) => logEvent("error", err));
   updateTimer = setInterval(
-    () => u.checkForUpdates().catch((err) => logUpdate("error", err)),
+    () => u.checkForUpdates().catch((err) => logEvent("error", err)),
     6 * 60 * 60 * 1000
   );
 }
@@ -295,6 +434,7 @@ function createWindow() {
 
   contentView = new WebContentsView({
     webPreferences: {
+      preload: path.join(__dirname, "shell-preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -314,22 +454,19 @@ function createWindow() {
 
   // ---- content wiring ----
   contentView.webContents.on("did-finish-load", () => {
-    if (!updatingKaneo) setStatus("ready");
+    if (showing !== "app") return; // the offline page, not Kaneo
+    setStatus(updatingKaneo ? "updating" : "ready");
+    logEvent("info", "Kaneo loaded");
     syncTheme();
     setTimeout(healBlankShell, 1500);
   });
   contentView.webContents.on("did-navigate-in-page", syncTheme);
 
-  let retry = null;
-  contentView.webContents.on("did-fail-load", (_e, _code, _desc, _url, isMainFrame) => {
+  contentView.webContents.on("did-fail-load", (_e, code, desc, url, isMainFrame) => {
     if (!isMainFrame) return;
-    setStatus("offline");
-    clearTimeout(retry);
-    retry = setTimeout(() => {
-      if (contentView && !contentView.webContents.isDestroyed()) {
-        contentView.webContents.loadURL(APP_URL);
-      }
-    }, 1500);
+    if (code === -3) return; // ERR_ABORTED: a superseded load, not a real failure
+    logEvent("warn", `content load failed: ${code} ${desc} (${url})`);
+    if (showing === "app") showOffline(`${desc} (${code})`);
   });
 
   contentView.webContents.setWindowOpenHandler(({ url }) => {
@@ -337,17 +474,8 @@ function createWindow() {
     return { action: "deny" };
   });
 
-  contentView.webContents.loadURL(APP_URL);
-
-  // ---- window state ----
-  const pushMax = () => send("kaneo:maximized", win.isMaximized());
-  const pushFocus = () => send("kaneo:focused", win.isFocused());
-  win.on("maximize", pushMax);
-  win.on("unmaximize", pushMax);
-  win.on("focus", pushFocus);
-  win.on("blur", pushFocus);
-  win.on("resize", layout);
-
+  // The first load is decided by tick(): the SPA is only fetched once the API
+  // answers, so it can never render a misleading sign-in page.
   layout();
   win.show();
 
@@ -357,8 +485,10 @@ function createWindow() {
 // ---- title bar menu ----------------------------------------------------------
 function showBarMenu() {
   const template = [
-    { label: "Reload Kaneo", click: () => hardReloadKaneo() },
+    { label: "Reconnect now", click: () => tick() },
+    { label: "Repair backend…", click: () => confirmRepair() },
     { type: "separator" },
+    { label: "Reload Kaneo", click: () => hardReloadKaneo() },
     { label: "Update Kaneo…", click: () => runKaneoUpdate() },
     {
       label: "Check for app updates…",
@@ -390,12 +520,23 @@ ipcMain.on("kaneo:close", () => {
 
 ipcMain.on("kaneo:menu", () => showBarMenu());
 
+ipcMain.on("kaneo:retry", () => {
+  logEvent("info", "reconnect requested");
+  failStreak = 0;
+  tick();
+});
+
+ipcMain.on("kaneo:repair", () => confirmRepair());
+
 // ---- lifecycle ---------------------------------------------------------------
 app.whenReady().then(() => {
   app.setAppUserModelId("app.kaneo.desktop"); // Windows taskbar identity
-  logUpdate("info", `starting v${app.getVersion()} (packaged=${app.isPackaged})`);
+  logEvent("info", `starting v${app.getVersion()} (packaged=${app.isPackaged})`);
   createWindow();
   startAutoUpdate();
+
+  tick();
+  reachTimer = setInterval(tick, PROBE_INTERVAL_MS);
 
   app.on("activate", () => {
     if (BaseWindow.getAllWindows().length === 0) createWindow();
@@ -404,6 +545,7 @@ app.whenReady().then(() => {
 
 app.on("window-all-closed", () => {
   if (themeTimer) clearInterval(themeTimer);
+  if (reachTimer) clearInterval(reachTimer);
   if (updateTimer) clearInterval(updateTimer);
   if (process.platform !== "darwin") app.quit();
 });
